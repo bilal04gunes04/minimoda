@@ -6,6 +6,7 @@ import math
 import os
 import time
 from dataclasses import asdict, dataclass
+from datetime import date
 
 from .binance_client import BinanceClient, BinanceError
 from .config import Config
@@ -24,6 +25,13 @@ class Position:
     opened_at: float
 
 
+@dataclass
+class DailyStats:
+    day: str = ""              # YYYY-MM-DD
+    realized_pnl: float = 0.0  # gun ici gerceklesen kar/zarar (USDT)
+    trades: int = 0
+
+
 class Trader:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -31,6 +39,7 @@ class Trader:
         self.strategy = EmaRsiStrategy(cfg.strategy)
         self.position: Position | None = None
         self.filters: dict | None = None
+        self.daily = DailyStats(day=str(date.today()))
         self._load_state()
 
     # ---------- durum kaydi (bot yeniden baslasa da pozisyonu hatirlar) ----------
@@ -43,14 +52,55 @@ class Trader:
                 if data.get("position"):
                     self.position = Position(**data["position"])
                     log.info("Kayitli pozisyon yuklendi: %s", self.position)
+                if data.get("daily"):
+                    saved = DailyStats(**data["daily"])
+                    if saved.day == str(date.today()):
+                        self.daily = saved
+                        log.info(
+                            "Gunluk durum yuklendi: K/Z=%.2f USDT, %d islem",
+                            saved.realized_pnl, saved.trades,
+                        )
             except (json.JSONDecodeError, TypeError):
                 log.warning("state.json okunamadi, sifirdan baslaniyor")
 
     def _save_state(self):
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(
-                {"position": asdict(self.position) if self.position else None}, f, indent=2
+                {
+                    "position": asdict(self.position) if self.position else None,
+                    "daily": asdict(self.daily),
+                },
+                f, indent=2,
             )
+
+    # ---------- gunluk hedef / limit ----------
+
+    def _roll_day(self):
+        """Gun degistiyse gunluk sayaclari sifirla."""
+        today = str(date.today())
+        if self.daily.day != today:
+            log.info(
+                "Yeni gun basladi. Dunku sonuc: K/Z=%.2f USDT, %d islem",
+                self.daily.realized_pnl, self.daily.trades,
+            )
+            self.daily = DailyStats(day=today)
+            self._save_state()
+
+    def _daily_halt_reason(self) -> str | None:
+        """Gunluk kar hedefine veya zarar limitine ulasildiysa sebep dondurur."""
+        target = self.cfg.daily.capital * self.cfg.daily.profit_target_pct / 100
+        loss_limit = self.cfg.daily.capital * self.cfg.daily.max_loss_pct / 100
+        if self.daily.realized_pnl >= target:
+            return (
+                f"gunluk kar hedefine ulasildi: {self.daily.realized_pnl:+.2f} USDT "
+                f"(hedef {target:.2f})"
+            )
+        if self.daily.realized_pnl <= -loss_limit:
+            return (
+                f"gunluk zarar limiti asildi: {self.daily.realized_pnl:+.2f} USDT "
+                f"(limit -{loss_limit:.2f})"
+            )
+        return None
 
     # ---------- miktar hesaplama ----------
 
@@ -93,6 +143,7 @@ class Trader:
         if not pos:
             return
         pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+        pnl_quote = (price - pos.entry_price) * pos.quantity
         if self.cfg.dry_run:
             log.info(
                 "[KAGIT ISLEM] SAT %s %.8f @ %.2f | K/Z: %+.2f%% (%s)",
@@ -105,6 +156,13 @@ class Trader:
                 pos.symbol, pos.quantity, price, pnl_pct, reason,
             )
         self.position = None
+        self.daily.realized_pnl += pnl_quote
+        self.daily.trades += 1
+        target = self.cfg.daily.capital * self.cfg.daily.profit_target_pct / 100
+        log.info(
+            "Gunluk durum: K/Z=%+.2f USDT / hedef %.2f USDT | %d islem",
+            self.daily.realized_pnl, target, self.daily.trades,
+        )
         self._save_state()
 
     # ---------- risk kontrolu ----------
@@ -124,6 +182,7 @@ class Trader:
     # ---------- ana dongu ----------
 
     def run_once(self):
+        self._roll_day()
         klines = self.client.get_klines(
             self.cfg.symbol, self.cfg.interval, limit=self.strategy.min_candles() + 50
         )
@@ -144,6 +203,12 @@ class Trader:
             self.cfg.symbol, live_price, signal.action, signal.reason,
             "ACIK" if self.position else "YOK",
         )
+
+        # 3) Gunluk hedef/limit doluysa yeni pozisyon ACILMAZ (acik pozisyon yine yonetilir)
+        halt = self._daily_halt_reason()
+        if halt and not self.position:
+            log.info("Bugun icin islem durduruldu: %s", halt)
+            return
 
         if signal.action == BUY and not self.position:
             self._buy(live_price, signal.reason)

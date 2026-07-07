@@ -25,6 +25,13 @@ class RiskConfig:
 
 
 @dataclass
+class DailyConfig:
+    capital: float = 1000.0          # ana para (USDT) - gunluk hedef/limit bunun yuzdesi
+    profit_target_pct: float = 10.0  # gunluk kar HEDEFI: ulasilinca bot o gun durur
+    max_loss_pct: float = 3.0        # gunluk zarar LIMITI: asilirsa bot o gun durur
+
+
+@dataclass
 class Config:
     api_key: str = ""
     api_secret: str = ""
@@ -35,6 +42,7 @@ class Config:
     poll_seconds: int = 60
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    daily: DailyConfig = field(default_factory=DailyConfig)
 
 
 def load_config(path: str = "config.yaml") -> Config:
@@ -55,10 +63,15 @@ def load_config(path: str = "config.yaml") -> Config:
         poll_seconds=int(raw.get("poll_seconds", 60)),
         strategy=StrategyConfig(**(raw.get("strategy") or {})),
         risk=RiskConfig(**(raw.get("risk") or {})),
+        daily=DailyConfig(**(raw.get("daily") or {})),
     )
 
     if cfg.strategy.ema_fast >= cfg.strategy.ema_slow:
         raise ValueError("ema_fast, ema_slow'dan kucuk olmalidir")
+    if cfg.daily.capital <= 0:
+        raise ValueError("daily.capital pozitif olmalidir")
+    if cfg.risk.quote_per_trade > cfg.daily.capital:
+        raise ValueError("risk.quote_per_trade, daily.capital'den buyuk olamaz")
     if not cfg.dry_run and (not cfg.api_key or not cfg.api_secret):
         raise ValueError(
             "dry_run kapaliyken BINANCE_API_KEY ve BINANCE_API_SECRET zorunludur (.env dosyasi)"

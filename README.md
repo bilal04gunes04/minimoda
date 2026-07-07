@@ -5,6 +5,9 @@ EMA kesişimi + RSI filtresi stratejisiyle çalışan, Python ile yazılmış ba
 ## Özellikler
 
 - **EMA(9/21) kesişimi + RSI(14) filtresi** stratejisi (parametreler ayarlanabilir)
+- **Scalping modu**: kısa mum aralığı (5 dk) ve küçük kâr/zarar eşikleriyle sık işlem
+- **Günlük kâr hedefi**: hedefe (örn. ana paranın %10'u) ulaşınca bot o gün yeni işlem açmaz
+- **Günlük zarar limiti**: limit aşılırsa bot o gün durur, ana parayı korur
 - **Zarar durdur (stop-loss)** ve **kâr al (take-profit)** risk yönetimi
 - **Kağıt işlem (dry-run) modu**: emirler borsaya gönderilmeden simüle edilir — varsayılan olarak açık
 - **Testnet desteği**: sahte parayla güvenle test edin — varsayılan olarak açık
@@ -47,9 +50,12 @@ Bot varsayılan olarak **testnet + kağıt işlem** modunda başlar; hiçbir ger
 | `strategy.ema_fast` / `ema_slow` | EMA periyotları | `9` / `21` |
 | `strategy.rsi_period` | RSI periyodu | `14` |
 | `risk.quote_per_trade` | İşlem başına USDT | `100` |
-| `risk.stop_loss_pct` | % zarar durdur | `2.0` |
-| `risk.take_profit_pct` | % kâr al | `4.0` |
-| `poll_seconds` | Kontrol aralığı (saniye) | `60` |
+| `risk.stop_loss_pct` | % zarar durdur (işlem başına) | `0.5` |
+| `risk.take_profit_pct` | % kâr al (işlem başına) | `0.8` |
+| `daily.capital` | Ana para (USDT) | `1000` |
+| `daily.profit_target_pct` | Günlük kâr hedefi (%, ulaşılınca durur) | `10` |
+| `daily.max_loss_pct` | Günlük zarar limiti (%, aşılırsa durur) | `3` |
+| `poll_seconds` | Kontrol aralığı (saniye) | `20` |
 
 ## Strateji
 
@@ -62,6 +68,15 @@ Bot varsayılan olarak **testnet + kağıt işlem** modunda başlar; hiçbir ger
 1. `config.yaml` içinde `testnet: false` ve `dry_run: false` yapın.
 2. `.env` dosyasına **gerçek** API anahtarlarınızı yazın (API anahtarında *sadece spot trade* yetkisi verin, **para çekme yetkisi vermeyin**).
 3. Bot başlarken sizden `EVET` yazarak onay ister.
+
+## Günlük kâr hedefi nasıl çalışır?
+
+- Bot gün içinde kapanan her işlemin gerçekleşen kâr/zararını (USDT) toplar.
+- Toplam, `daily.capital × daily.profit_target_pct / 100` değerine ulaşırsa bot **o gün yeni pozisyon açmaz** (açık pozisyon varsa yönetilmeye devam eder).
+- Toplam zarar `daily.max_loss_pct` limitini aşarsa bot yine durur — kötü bir günde ana paranın erimesini engeller.
+- Gece yarısı sayaç sıfırlanır ve bot ertesi gün yeniden işlem yapmaya başlar.
+
+> **Önemli:** `profit_target_pct` bir *durdurma eşiğidir*, kazanç garantisi değildir. Piyasa uygun sinyal üretmezse bot o gün hedefe ulaşamayabilir; hiçbir strateji düzenli olarak günlük %10 kazandıramaz. Hedefi ne kadar yüksek tutarsanız, o hedefe ulaşılamayan gün sayısı o kadar artar.
 
 ## ⚠️ Risk uyarısı
 
