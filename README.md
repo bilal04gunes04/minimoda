@@ -104,10 +104,10 @@ nano .env && sudo systemctl restart tradebot   # anahtar girip yeniden baslat
 | `strategy.rsi_period` | RSI periyodu | `14` |
 | `risk.quote_per_trade` | İşlem başına USDT | `100` |
 | `risk.max_open_positions` | Tüm coinlerde toplam açık pozisyon | `2` |
-| `risk.stop_loss_pct` | % sabit zarar durdur | `0.5` |
-| `risk.take_profit_pct` | % sabit kâr al (`0` = kapalı, trailing kullanılır) | `0` |
+| `risk.stop_loss_pct` | % sabit zarar durdur | `1.0` |
+| `risk.take_profit_pct` | % sabit kâr al (`0` = kapalı, trailing kullanılır) | `2.0` |
 | `risk.trailing_activation_pct` | Trailing'in devreye girdiği kâr yüzdesi | `0.4` |
-| `risk.trailing_stop_pct` | Tepeden bu kadar düşünce sat | `0.3` |
+| `risk.trailing_stop_pct` | Tepeden bu kadar düşünce sat (`0` = kapalı) | `0` |
 | `daily.capital` | Ana para (USDT) | `1000` |
 | `daily.profit_target_pct` | Günlük kâr hedefi (%, ulaşılınca durur) | `10` |
 | `daily.max_loss_pct` | Günlük zarar limiti (%, aşılırsa durur) | `3` |

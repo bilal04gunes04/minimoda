@@ -25,14 +25,14 @@ strategy:
   rsi_oversold: 30   # RSI bu degerin altindaysa asiri satim (alim firsati)
   rsi_overbought: 70 # RSI bu degerin ustundeyse asiri alim (satis sinyali)
 
-# Islem basi risk yonetimi (kucuk ve sik islemler)
+# Islem basi risk yonetimi
 risk:
   quote_per_trade: 100.0     # her islemde kullanilacak USDT miktari (kucuk tutun)
   max_open_positions: 2      # tum coinlerde ayni anda toplam acik pozisyon
-  stop_loss_pct: 0.5         # % sabit zarar durdur (islem basina)
-  take_profit_pct: 0.0       # % sabit kar al (0 = kapali, trailing stop kullanilir)
+  stop_loss_pct: 1.0         # % sabit zarar durdur (islem basina)
+  take_profit_pct: 2.0       # % sabit kar al (0 = kapali, trailing stop kullanilir)
   trailing_activation_pct: 0.4  # kar bu yuzdeye ulasinca trailing stop devreye girer
-  trailing_stop_pct: 0.3        # tepe fiyattan bu kadar dusunce satilir (0 = kapali)
+  trailing_stop_pct: 0.0        # tepe fiyattan bu kadar dusunce satilir (0 = kapali)
 
 # Gunluk hedef ve koruma
 # NOT: profit_target_pct bir HEDEF/DURDURMA esigidir, kazanc garantisi degildir.
