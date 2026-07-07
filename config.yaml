@@ -42,6 +42,27 @@ daily:
   profit_target_pct: 10.0  # gunluk kar hedefi: ana paranin %10'u -> ulasilinca durur
   max_loss_pct: 3.0        # gunluk zarar limiti: ana paranin %3'u -> asilirsa durur
 
+# AL sinyali onay filtreleri
+# Filtreler sinyal uretmez; stratejinin AL sinyalini dogrular.
+# Herhangi biri "hayir" derse islem acilmaz. Tumu ucretsiz API kullanir.
+filters:
+  volume:                  # 1) Hacim onayi: dusuk hacimli sahte kesisimleri eler
+    enabled: true
+    lookback: 20           # ortalama icin bakilacak mum sayisi
+    min_ratio: 1.2         # son mum hacmi ortalamanin en az bu kati olmali
+  orderbook:               # 2) Emir defteri: alis tarafi agir degilse alim yapma
+    enabled: true
+    depth: 50              # okunacak seviye sayisi
+    min_bid_ratio: 0.55    # alis hacminin toplam icindeki asgari payi
+  fear_greed:              # 3) Piyasa rejimi: asiri korku/acgozlulukte alim yapma
+    enabled: true
+    min_value: 20          # endeks bunun altindaysa (panik) bekle
+    max_value: 85          # endeks bunun ustundeyse (balon) bekle
+  whale:                   # 4) Balina akisi: buyuk emirlerde satis baskisi varsa bekle
+    enabled: true
+    min_trade_usdt: 50000  # bu tutar ustu emirler "buyuk" sayilir
+    max_sell_ratio: 0.65   # buyuk emirlerde satis orani bunu asarsa alim yapma
+
 # Telegram kontrol paneli
 # Acmak icin: enabled: true yapin ve .env dosyasina
 # TELEGRAM_BOT_TOKEN ile TELEGRAM_CHAT_ID ekleyin (README'de anlatiliyor)

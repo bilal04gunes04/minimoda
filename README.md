@@ -6,6 +6,7 @@ EMA kesişimi + RSI filtresi stratejisiyle çalışan, Python ile yazılmış bi
 
 - **Çoklu coin desteği**: aynı anda birden fazla paritede işlem (varsayılan: BTC, ETH, SOL)
 - **EMA(9/21) kesişimi + RSI(14) filtresi** stratejisi (parametreler ayarlanabilir)
+- **4 katmanlı sinyal onay filtresi**: hacim onayı, order book (emir defteri) dengesi, Fear & Greed piyasa rejimi, balina emir akışı — zayıf sinyalleri işleme dönüşmeden eler
 - **Trailing stop (iz süren stop)**: kâr belli bir seviyeye ulaşınca devreye girer, tepe fiyatı takip eder — kârı kilitler, yükseliş sürdükçe satmaz
 - **Telegram kontrol paneli**: telefondan durum izleme, duraklat/devam, pozisyon kapatma, günlük rapor + her işlemde anlık bildirim
 - **Backtest modülü**: stratejiyi gerçek geçmiş verilerle test edin, kazanma oranını görün
@@ -112,6 +113,19 @@ nano .env && sudo systemctl restart tradebot   # anahtar girip yeniden baslat
 | `daily.max_loss_pct` | Günlük zarar limiti (%, aşılırsa durur) | `3` |
 | `telegram.enabled` | Telegram paneli | `false` |
 | `poll_seconds` | Kontrol aralığı (saniye) | `15` |
+
+## Sinyal onay filtreleri
+
+Strateji AL dediğinde işlem hemen açılmaz; sinyal 4 filtreden geçer. Herhangi biri "hayır" derse işlem iptal olur (log'da sebebiyle görünür). Hepsi ücretsiz API kullanır, `config.yaml`'ın `filters` bölümünden tek tek açılıp kapanabilir:
+
+| Filtre | Ne kontrol eder | Neyi engeller |
+|---|---|---|
+| **Hacim onayı** | Kesişim mumunun hacmi son 20 mumun ortalamasının ≥1.2 katı mı? | Düşük hacimli sahte kesişimler |
+| **Order book** | Emir defterinde alış tarafının payı ≥%55 mi? | Satış duvarına doğru alım yapmak |
+| **Fear & Greed** | Piyasa endeksi 20-85 bandında mı? (1 saat önbellekli) | Panik çöküşte veya balon tepesinde alım |
+| **Balina akışı** | Son işlemlerdeki 50k$+ emirlerde satış oranı ≤%65 mi? | Büyük oyuncular satarken alım yapmak |
+
+API hatasında filtre atlanır (bot kilitlenmez), log'a uyarı düşer. Backtest hacim filtresini de uygular; diğer üçü geçmişe dönük test edilemez (tarihsel order book verisi yoktur).
 
 ## Strateji ve çıkış mantığı
 

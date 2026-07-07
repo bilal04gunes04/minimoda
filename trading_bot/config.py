@@ -41,6 +41,42 @@ class TelegramConfig:
 
 
 @dataclass
+class VolumeFilterConfig:
+    enabled: bool = True
+    lookback: int = 20        # ortalama icin bakilacak mum sayisi
+    min_ratio: float = 1.2    # son mum hacmi ortalamanin en az bu kati olmali
+
+
+@dataclass
+class OrderbookFilterConfig:
+    enabled: bool = True
+    depth: int = 50           # emir defterinden kac seviye okunacak
+    min_bid_ratio: float = 0.55  # alis tarafinin toplam iceindeki asgari payi
+
+
+@dataclass
+class FearGreedFilterConfig:
+    enabled: bool = True
+    min_value: int = 20       # endeks bunun altindaysa (asiri korku) alim yapma
+    max_value: int = 85       # endeks bunun ustundeyse (asiri acgozluluk) alim yapma
+
+
+@dataclass
+class WhaleFilterConfig:
+    enabled: bool = True
+    min_trade_usdt: float = 50000.0  # bu tutarin ustundeki emirler "buyuk" sayilir
+    max_sell_ratio: float = 0.65     # buyuk emirlerde satis orani bunu asarsa alim yapma
+
+
+@dataclass
+class FiltersConfig:
+    volume: VolumeFilterConfig = field(default_factory=VolumeFilterConfig)
+    orderbook: OrderbookFilterConfig = field(default_factory=OrderbookFilterConfig)
+    fear_greed: FearGreedFilterConfig = field(default_factory=FearGreedFilterConfig)
+    whale: WhaleFilterConfig = field(default_factory=WhaleFilterConfig)
+
+
+@dataclass
 class Config:
     api_key: str = ""
     api_secret: str = ""
@@ -53,6 +89,7 @@ class Config:
     risk: RiskConfig = field(default_factory=RiskConfig)
     daily: DailyConfig = field(default_factory=DailyConfig)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    filters: FiltersConfig = field(default_factory=FiltersConfig)
 
 
 def load_config(path: str = "config.yaml") -> Config:
@@ -68,6 +105,14 @@ def load_config(path: str = "config.yaml") -> Config:
     if isinstance(symbols, str):
         symbols = [symbols]
     symbols = [str(s).upper() for s in symbols]
+
+    flt_raw = raw.get("filters") or {}
+    filters = FiltersConfig(
+        volume=VolumeFilterConfig(**(flt_raw.get("volume") or {})),
+        orderbook=OrderbookFilterConfig(**(flt_raw.get("orderbook") or {})),
+        fear_greed=FearGreedFilterConfig(**(flt_raw.get("fear_greed") or {})),
+        whale=WhaleFilterConfig(**(flt_raw.get("whale") or {})),
+    )
 
     tg_raw = raw.get("telegram") or {}
     telegram = TelegramConfig(
@@ -88,6 +133,7 @@ def load_config(path: str = "config.yaml") -> Config:
         risk=RiskConfig(**(raw.get("risk") or {})),
         daily=DailyConfig(**(raw.get("daily") or {})),
         telegram=telegram,
+        filters=filters,
     )
 
     if cfg.strategy.ema_fast >= cfg.strategy.ema_slow:

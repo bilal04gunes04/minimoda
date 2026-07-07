@@ -43,7 +43,10 @@ def fetch_history(client: BinanceClient, symbol: str, interval: str, total: int)
         if not chunk:
             break
         parsed = [
-            {"open_time": k[0], "high": float(k[2]), "low": float(k[3]), "close": float(k[4])}
+            {
+                "open_time": k[0], "high": float(k[2]), "low": float(k[3]),
+                "close": float(k[4]), "volume": float(k[5]),
+            }
             for k in chunk
         ]
         klines = parsed + klines
@@ -100,6 +103,13 @@ def run_backtest(klines: list[dict], cfg: Config) -> tuple[list[Trade], list[flo
 
         signal = strategy.evaluate(closes)
         if not in_position and signal.action == BUY:
+            # hacim onayi filtresi (order book / F&G / balina gecmise donuk test edilemez)
+            vf = cfg.filters.volume
+            if vf.enabled and i > vf.lookback:
+                volumes = [k.get("volume", 0.0) for k in klines[:i]]
+                avg = sum(volumes[-vf.lookback - 1:-1]) / vf.lookback
+                if avg > 0 and volumes[-1] / avg < vf.min_ratio:
+                    continue  # dusuk hacimli kesisim, islem acma
             entry = peak = candle["close"]
             in_position = True
         elif in_position and signal.action == SELL:

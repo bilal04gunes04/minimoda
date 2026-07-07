@@ -73,6 +73,23 @@ class BinanceClient:
         data = self._request("GET", "/api/v3/ticker/price", {"symbol": symbol})
         return float(data["price"])
 
+    def get_depth(self, symbol: str, limit: int = 50) -> dict:
+        """Emir defteri: {'bids': [[fiyat, miktar], ...], 'asks': [...]}"""
+        return self._request("GET", "/api/v3/depth", {"symbol": symbol, "limit": limit})
+
+    def get_agg_trades(self, symbol: str, limit: int = 1000) -> list[dict]:
+        """Son gerceklesen islemler (buyuk emir/balina tespiti icin)."""
+        data = self._request("GET", "/api/v3/aggTrades", {"symbol": symbol, "limit": limit})
+        return [
+            {
+                "price": float(t["p"]),
+                "qty": float(t["q"]),
+                "is_sell": bool(t["m"]),  # m=true: alici pasif -> agresif SATIS islemi
+                "time": t["T"],
+            }
+            for t in data
+        ]
+
     def get_symbol_filters(self, symbol: str) -> dict:
         """LOT_SIZE / NOTIONAL filtrelerini dondurur (miktar yuvarlama icin)."""
         data = self._request("GET", "/api/v3/exchangeInfo", {"symbol": symbol})

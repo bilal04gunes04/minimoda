@@ -11,6 +11,7 @@ from datetime import date
 
 from .binance_client import BinanceClient, BinanceError
 from .config import Config
+from .filters import SignalFilters
 from .strategy import BUY, SELL, EmaRsiStrategy
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class Trader:
         self.cfg = cfg
         self.client = BinanceClient(cfg.api_key, cfg.api_secret, cfg.testnet)
         self.strategy = EmaRsiStrategy(cfg.strategy)
+        self.signal_filters = SignalFilters(cfg.filters, lambda: self.client)
         self.positions: dict[str, Position] = {}
         self.filters: dict[str, dict] = {}
         self.daily = DailyStats(day=str(date.today()))
@@ -260,6 +262,13 @@ class Trader:
         if len(self.positions) >= self.cfg.risk.max_open_positions:
             log.info("%s: maksimum acik pozisyon sayisina ulasildi", symbol)
             return
+
+        # 4) Onay filtreleri: hacim, emir defteri, Fear&Greed, balina akisi
+        volumes = [k.get("volume", 0.0) for k in klines[:-1]]
+        ok, block_reason = self.signal_filters.check_buy(symbol, volumes)
+        if not ok:
+            log.info("%s: AL sinyali filtreye takildi -> %s", symbol, block_reason)
+            return
         self._buy(symbol, live_price, signal.reason)
 
     def run_once(self):
@@ -280,6 +289,12 @@ class Trader:
                 f"Mod: {'TESTNET' if self.cfg.testnet else 'GERCEK'}"
                 f" | {'kagit islem' if self.cfg.dry_run else 'gercek emir'}",
                 f"Coinler: {', '.join(self.cfg.symbols)} ({self.cfg.interval})",
+                "Filtreler: " + (", ".join(n for n, on in [
+                    ("hacim", self.cfg.filters.volume.enabled),
+                    ("emir defteri", self.cfg.filters.orderbook.enabled),
+                    ("Fear&Greed", self.cfg.filters.fear_greed.enabled),
+                    ("balina", self.cfg.filters.whale.enabled),
+                ] if on) or "kapali"),
                 f"Gunluk K/Z: {self.daily.realized_pnl:+.2f} / hedef {target:.2f} USDT",
                 f"Bugun: {self.daily.trades} islem, {self.daily.wins} kazanan",
             ]
