@@ -46,7 +46,7 @@ Bot varsayılan olarak **testnet + kağıt işlem** modunda başlar; hiçbir ger
 | `testnet` | `true` = testnet, `false` = gerçek hesap | `true` |
 | `dry_run` | `true` = emirler sadece simüle edilir | `true` |
 | `symbol` | İşlem çifti | `BTCUSDT` |
-| `interval` | Mum aralığı (`1m`, `5m`, `15m`, `1h`, `4h`, `1d`...) | `15m` |
+| `interval` | Mum aralığı (`1m`, `5m`, `15m`, `1h`, `4h`, `1d`...) | `1m` |
 | `strategy.ema_fast` / `ema_slow` | EMA periyotları | `9` / `21` |
 | `strategy.rsi_period` | RSI periyodu | `14` |
 | `risk.quote_per_trade` | İşlem başına USDT | `100` |
@@ -55,7 +55,7 @@ Bot varsayılan olarak **testnet + kağıt işlem** modunda başlar; hiçbir ger
 | `daily.capital` | Ana para (USDT) | `1000` |
 | `daily.profit_target_pct` | Günlük kâr hedefi (%, ulaşılınca durur) | `10` |
 | `daily.max_loss_pct` | Günlük zarar limiti (%, aşılırsa durur) | `3` |
-| `poll_seconds` | Kontrol aralığı (saniye) | `20` |
+| `poll_seconds` | Kontrol aralığı (saniye) | `15` |
 
 ## Strateji
 

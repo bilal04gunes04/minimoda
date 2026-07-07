@@ -12,7 +12,7 @@ dry_run: true
 
 # Islem cifti ve mum araligi (scalping icin kisa aralik)
 symbol: BTCUSDT
-interval: 5m         # 1m, 5m, 15m, 1h, 4h, 1d ...
+interval: 1m         # 1m, 5m, 15m, 1h, 4h, 1d ...
 
 # Strateji parametreleri
 strategy:
@@ -37,5 +37,5 @@ daily:
   profit_target_pct: 10.0  # gunluk kar hedefi: ana paranin %10'u -> ulasilinca durur
   max_loss_pct: 3.0        # gunluk zarar limiti: ana paranin %3'u -> asilirsa durur
 
-# Dongu bekleme suresi (saniye) - scalping icin kisa
-poll_seconds: 20
+# Dongu bekleme suresi (saniye) - 1m mumlar icin kisa
+poll_seconds: 15
