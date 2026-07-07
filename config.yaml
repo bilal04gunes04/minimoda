@@ -10,8 +10,11 @@ testnet: true
 # false -> Emirler gercekten gonderilir
 dry_run: true
 
-# Islem cifti ve mum araligi (scalping icin kisa aralik)
-symbol: BTCUSDT
+# Islem ciftleri (coklu coin destegi) ve mum araligi
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
 interval: 1m         # 1m, 5m, 15m, 1h, 4h, 1d ...
 
 # Strateji parametreleri
@@ -24,10 +27,12 @@ strategy:
 
 # Islem basi risk yonetimi (kucuk ve sik islemler)
 risk:
-  quote_per_trade: 100.0   # her islemde kullanilacak USDT miktari (kucuk tutun)
-  max_open_positions: 1    # ayni anda acik pozisyon sayisi
-  stop_loss_pct: 0.5       # % zarar durdur (islem basina)
-  take_profit_pct: 0.8     # % kar al (islem basina)
+  quote_per_trade: 100.0     # her islemde kullanilacak USDT miktari (kucuk tutun)
+  max_open_positions: 2      # tum coinlerde ayni anda toplam acik pozisyon
+  stop_loss_pct: 0.5         # % sabit zarar durdur (islem basina)
+  take_profit_pct: 0.0       # % sabit kar al (0 = kapali, trailing stop kullanilir)
+  trailing_activation_pct: 0.4  # kar bu yuzdeye ulasinca trailing stop devreye girer
+  trailing_stop_pct: 0.3        # tepe fiyattan bu kadar dusunce satilir (0 = kapali)
 
 # Gunluk hedef ve koruma
 # NOT: profit_target_pct bir HEDEF/DURDURMA esigidir, kazanc garantisi degildir.
@@ -36,6 +41,12 @@ daily:
   capital: 1000.0          # ana paraniz (USDT)
   profit_target_pct: 10.0  # gunluk kar hedefi: ana paranin %10'u -> ulasilinca durur
   max_loss_pct: 3.0        # gunluk zarar limiti: ana paranin %3'u -> asilirsa durur
+
+# Telegram kontrol paneli
+# Acmak icin: enabled: true yapin ve .env dosyasina
+# TELEGRAM_BOT_TOKEN ile TELEGRAM_CHAT_ID ekleyin (README'de anlatiliyor)
+telegram:
+  enabled: false
 
 # Dongu bekleme suresi (saniye) - 1m mumlar icin kisa
 poll_seconds: 15

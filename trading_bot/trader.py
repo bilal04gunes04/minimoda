@@ -1,9 +1,10 @@
-"""Ana islem dongusu: sinyal uret, risk kurallarini uygula, emir ver."""
+"""Ana islem dongusu: coklu coin, sinyal uretimi, risk kurallari, emir yonetimi."""
 
 import json
 import logging
 import math
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -23,6 +24,7 @@ class Position:
     quantity: float
     entry_price: float
     opened_at: float
+    peak_price: float = 0.0  # trailing stop icin girisden beri gorulen en yuksek fiyat
 
 
 @dataclass
@@ -30,6 +32,7 @@ class DailyStats:
     day: str = ""              # YYYY-MM-DD
     realized_pnl: float = 0.0  # gun ici gerceklesen kar/zarar (USDT)
     trades: int = 0
+    wins: int = 0
 
 
 class Trader:
@@ -37,37 +40,42 @@ class Trader:
         self.cfg = cfg
         self.client = BinanceClient(cfg.api_key, cfg.api_secret, cfg.testnet)
         self.strategy = EmaRsiStrategy(cfg.strategy)
-        self.position: Position | None = None
-        self.filters: dict | None = None
+        self.positions: dict[str, Position] = {}
+        self.filters: dict[str, dict] = {}
         self.daily = DailyStats(day=str(date.today()))
+        self.paused = False           # Telegram /duraklat ile yeni alimlar durdurulur
+        self.lock = threading.RLock() # Telegram komutlari ile ana dongu cakismasin
+        self.notify = lambda msg: None  # Telegram baglaninca gercek gonderici atanir
         self._load_state()
 
-    # ---------- durum kaydi (bot yeniden baslasa da pozisyonu hatirlar) ----------
+    # ---------- durum kaydi (bot yeniden baslasa da pozisyonlari hatirlar) ----------
 
     def _load_state(self):
-        if os.path.exists(STATE_FILE):
-            try:
-                with open(STATE_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if data.get("position"):
-                    self.position = Position(**data["position"])
-                    log.info("Kayitli pozisyon yuklendi: %s", self.position)
-                if data.get("daily"):
-                    saved = DailyStats(**data["daily"])
-                    if saved.day == str(date.today()):
-                        self.daily = saved
-                        log.info(
-                            "Gunluk durum yuklendi: K/Z=%.2f USDT, %d islem",
-                            saved.realized_pnl, saved.trades,
-                        )
-            except (json.JSONDecodeError, TypeError):
-                log.warning("state.json okunamadi, sifirdan baslaniyor")
+        if not os.path.exists(STATE_FILE):
+            return
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for sym, p in (data.get("positions") or {}).items():
+                self.positions[sym] = Position(**p)
+            if self.positions:
+                log.info("Kayitli pozisyonlar yuklendi: %s", list(self.positions))
+            if data.get("daily"):
+                saved = DailyStats(**data["daily"])
+                if saved.day == str(date.today()):
+                    self.daily = saved
+                    log.info(
+                        "Gunluk durum yuklendi: K/Z=%.2f USDT, %d islem",
+                        saved.realized_pnl, saved.trades,
+                    )
+        except (json.JSONDecodeError, TypeError):
+            log.warning("state.json okunamadi, sifirdan baslaniyor")
 
     def _save_state(self):
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "position": asdict(self.position) if self.position else None,
+                    "positions": {s: asdict(p) for s, p in self.positions.items()},
                     "daily": asdict(self.daily),
                 },
                 f, indent=2,
@@ -79,10 +87,12 @@ class Trader:
         """Gun degistiyse gunluk sayaclari sifirla."""
         today = str(date.today())
         if self.daily.day != today:
-            log.info(
-                "Yeni gun basladi. Dunku sonuc: K/Z=%.2f USDT, %d islem",
-                self.daily.realized_pnl, self.daily.trades,
+            msg = (
+                f"Yeni gun basladi. Dunku sonuc: K/Z={self.daily.realized_pnl:+.2f} USDT, "
+                f"{self.daily.trades} islem"
             )
+            log.info(msg)
+            self.notify(msg)
             self.daily = DailyStats(day=today)
             self._save_state()
 
@@ -104,42 +114,44 @@ class Trader:
 
     # ---------- miktar hesaplama ----------
 
-    def _round_qty(self, qty: float) -> float:
-        step = self.filters["step_size"]
+    def _round_qty(self, symbol: str, qty: float) -> float:
+        step = self.filters.get(symbol, {}).get("step_size", 0)
         if step <= 0:
             return qty
         return math.floor(qty / step) * step
 
-    def _calc_buy_qty(self, price: float) -> float:
-        qty = self._round_qty(self.cfg.risk.quote_per_trade / price)
-        if qty < self.filters["min_qty"]:
-            log.warning("Hesaplanan miktar cok kucuk: %s", qty)
+    def _calc_buy_qty(self, symbol: str, price: float) -> float:
+        f = self.filters.get(symbol, {"min_qty": 0, "min_notional": 0})
+        qty = self._round_qty(symbol, self.cfg.risk.quote_per_trade / price)
+        if qty < f["min_qty"]:
+            log.warning("%s: hesaplanan miktar cok kucuk: %s", symbol, qty)
             return 0.0
-        if qty * price < self.filters["min_notional"]:
+        if qty * price < f["min_notional"]:
             log.warning(
-                "Emir tutari minimum islem tutarinin altinda (%.2f < %.2f)",
-                qty * price, self.filters["min_notional"],
+                "%s: emir tutari minimum islem tutarinin altinda (%.2f < %.2f)",
+                symbol, qty * price, f["min_notional"],
             )
             return 0.0
         return qty
 
     # ---------- emir islemleri ----------
 
-    def _buy(self, price: float, reason: str):
-        qty = self._calc_buy_qty(price)
+    def _buy(self, symbol: str, price: float, reason: str):
+        qty = self._calc_buy_qty(symbol, price)
         if qty <= 0:
             return
         if self.cfg.dry_run:
-            log.info("[KAGIT ISLEM] AL %s %.8f @ %.2f (%s)", self.cfg.symbol, qty, price, reason)
+            log.info("[KAGIT ISLEM] AL %s %.8f @ %.2f (%s)", symbol, qty, price, reason)
         else:
-            result = self.client.market_order(self.cfg.symbol, "BUY", qty)
+            result = self.client.market_order(symbol, "BUY", qty)
             price = float(result["fills"][0]["price"]) if result.get("fills") else price
-            log.info("ALINDI %s %.8f @ %.2f (%s)", self.cfg.symbol, qty, price, reason)
-        self.position = Position(self.cfg.symbol, qty, price, time.time())
+            log.info("ALINDI %s %.8f @ %.2f (%s)", symbol, qty, price, reason)
+        self.positions[symbol] = Position(symbol, qty, price, time.time(), peak_price=price)
         self._save_state()
+        self.notify(f"🟢 AL {symbol} @ {price:.2f}\nSebep: {reason}")
 
-    def _sell(self, price: float, reason: str):
-        pos = self.position
+    def _sell(self, symbol: str, price: float, reason: str):
+        pos = self.positions.get(symbol)
         if not pos:
             return
         pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
@@ -147,81 +159,162 @@ class Trader:
         if self.cfg.dry_run:
             log.info(
                 "[KAGIT ISLEM] SAT %s %.8f @ %.2f | K/Z: %+.2f%% (%s)",
-                pos.symbol, pos.quantity, price, pnl_pct, reason,
+                symbol, pos.quantity, price, pnl_pct, reason,
             )
         else:
-            self.client.market_order(pos.symbol, "SELL", self._round_qty(pos.quantity))
+            self.client.market_order(symbol, "SELL", self._round_qty(symbol, pos.quantity))
             log.info(
                 "SATILDI %s %.8f @ %.2f | K/Z: %+.2f%% (%s)",
-                pos.symbol, pos.quantity, price, pnl_pct, reason,
+                symbol, pos.quantity, price, pnl_pct, reason,
             )
-        self.position = None
+        del self.positions[symbol]
         self.daily.realized_pnl += pnl_quote
         self.daily.trades += 1
+        if pnl_quote > 0:
+            self.daily.wins += 1
         target = self.cfg.daily.capital * self.cfg.daily.profit_target_pct / 100
         log.info(
             "Gunluk durum: K/Z=%+.2f USDT / hedef %.2f USDT | %d islem",
             self.daily.realized_pnl, target, self.daily.trades,
         )
         self._save_state()
+        emoji = "✅" if pnl_quote >= 0 else "🔻"
+        self.notify(
+            f"{emoji} SAT {symbol} @ {price:.2f} | K/Z: {pnl_pct:+.2f}% ({pnl_quote:+.2f} USDT)\n"
+            f"Sebep: {reason}\n"
+            f"Gunluk K/Z: {self.daily.realized_pnl:+.2f} / {target:.2f} USDT"
+        )
 
-    # ---------- risk kontrolu ----------
+    def close_position(self, symbol: str) -> str:
+        """Telegram /kapat komutu icin: pozisyonu piyasa fiyatindan kapatir."""
+        with self.lock:
+            if symbol not in self.positions:
+                return f"{symbol} icin acik pozisyon yok."
+            price = self.client.get_price(symbol)
+            self._sell(symbol, price, "kullanici istegi (/kapat)")
+            return f"{symbol} pozisyonu kapatildi."
 
-    def _check_stop_take(self, price: float) -> str | None:
-        """Acik pozisyon icin zarar-durdur / kar-al kontrolu."""
-        pos = self.position
+    # ---------- cikis kontrolu (stop-loss / take-profit / trailing) ----------
+
+    def _check_exits(self, symbol: str, price: float) -> str | None:
+        pos = self.positions.get(symbol)
         if not pos:
             return None
+        r = self.cfg.risk
+        pos.peak_price = max(pos.peak_price, price)
         change_pct = (price - pos.entry_price) / pos.entry_price * 100
-        if change_pct <= -self.cfg.risk.stop_loss_pct:
+
+        if change_pct <= -r.stop_loss_pct:
             return f"zarar durdur tetiklendi ({change_pct:+.2f}%)"
-        if change_pct >= self.cfg.risk.take_profit_pct:
+        if r.take_profit_pct > 0 and change_pct >= r.take_profit_pct:
             return f"kar al tetiklendi ({change_pct:+.2f}%)"
+        if r.trailing_stop_pct > 0:
+            peak_gain_pct = (pos.peak_price - pos.entry_price) / pos.entry_price * 100
+            if peak_gain_pct >= r.trailing_activation_pct:
+                drop_pct = (pos.peak_price - price) / pos.peak_price * 100
+                if drop_pct >= r.trailing_stop_pct:
+                    return (
+                        f"iz suren stop: tepe {pos.peak_price:.2f}'den "
+                        f"%{drop_pct:.2f} dusus (K/Z {change_pct:+.2f}%)"
+                    )
         return None
 
     # ---------- ana dongu ----------
 
-    def run_once(self):
-        self._roll_day()
+    def _process_symbol(self, symbol: str):
         klines = self.client.get_klines(
-            self.cfg.symbol, self.cfg.interval, limit=self.strategy.min_candles() + 50
+            symbol, self.cfg.interval, limit=self.strategy.min_candles() + 50
         )
         # Son mum henuz kapanmadigi icin kapali mumlarla calis
         closes = [k["close"] for k in klines[:-1]]
         live_price = klines[-1]["close"]
 
-        # 1) Acik pozisyonda zarar-durdur / kar-al her zaman once kontrol edilir
-        exit_reason = self._check_stop_take(live_price)
+        # 1) Acik pozisyonda cikis kosullari her zaman once kontrol edilir
+        exit_reason = self._check_exits(symbol, live_price)
         if exit_reason:
-            self._sell(live_price, exit_reason)
+            self._sell(symbol, live_price, exit_reason)
             return
 
         # 2) Strateji sinyali
         signal = self.strategy.evaluate(closes)
         log.info(
             "%s fiyat=%.2f sinyal=%s (%s) pozisyon=%s",
-            self.cfg.symbol, live_price, signal.action, signal.reason,
-            "ACIK" if self.position else "YOK",
+            symbol, live_price, signal.action, signal.reason,
+            "ACIK" if symbol in self.positions else "YOK",
         )
 
-        # 3) Gunluk hedef/limit doluysa yeni pozisyon ACILMAZ (acik pozisyon yine yonetilir)
-        halt = self._daily_halt_reason()
-        if halt and not self.position:
-            log.info("Bugun icin islem durduruldu: %s", halt)
+        if signal.action == SELL and symbol in self.positions:
+            self._sell(symbol, live_price, signal.reason)
             return
 
-        if signal.action == BUY and not self.position:
-            self._buy(live_price, signal.reason)
-        elif signal.action == SELL and self.position:
-            self._sell(live_price, signal.reason)
+        # 3) Yeni alim onu kesen kosullar
+        if signal.action != BUY or symbol in self.positions:
+            return
+        if self.paused:
+            log.info("%s: bot duraklatildi (/duraklat), alim yapilmadi", symbol)
+            return
+        halt = self._daily_halt_reason()
+        if halt:
+            log.info("%s: bugun icin islem durduruldu: %s", symbol, halt)
+            return
+        if len(self.positions) >= self.cfg.risk.max_open_positions:
+            log.info("%s: maksimum acik pozisyon sayisina ulasildi", symbol)
+            return
+        self._buy(symbol, live_price, signal.reason)
+
+    def run_once(self):
+        with self.lock:
+            self._roll_day()
+            for symbol in self.cfg.symbols:
+                try:
+                    self._process_symbol(symbol)
+                except BinanceError as e:
+                    log.error("%s: Binance hatasi: %s", symbol, e)
+
+    def status_text(self) -> str:
+        """Telegram /durum komutu icin ozet."""
+        with self.lock:
+            target = self.cfg.daily.capital * self.cfg.daily.profit_target_pct / 100
+            lines = [
+                f"🤖 Bot: {'⏸ DURAKLATILDI' if self.paused else '▶️ CALISIYOR'}",
+                f"Mod: {'TESTNET' if self.cfg.testnet else 'GERCEK'}"
+                f" | {'kagit islem' if self.cfg.dry_run else 'gercek emir'}",
+                f"Coinler: {', '.join(self.cfg.symbols)} ({self.cfg.interval})",
+                f"Gunluk K/Z: {self.daily.realized_pnl:+.2f} / hedef {target:.2f} USDT",
+                f"Bugun: {self.daily.trades} islem, {self.daily.wins} kazanan",
+            ]
+            if self.positions:
+                lines.append("\nAcik pozisyonlar:")
+                for sym, pos in self.positions.items():
+                    try:
+                        price = self.client.get_price(sym)
+                        pnl = (price - pos.entry_price) / pos.entry_price * 100
+                        lines.append(
+                            f"• {sym}: giris {pos.entry_price:.2f}, "
+                            f"simdiki {price:.2f} ({pnl:+.2f}%)"
+                        )
+                    except BinanceError:
+                        lines.append(f"• {sym}: giris {pos.entry_price:.2f}")
+            else:
+                lines.append("Acik pozisyon yok.")
+            halt = self._daily_halt_reason()
+            if halt:
+                lines.append(f"\n⛔ {halt}")
+            return "\n".join(lines)
 
     def run_forever(self):
         mode = "KAGIT ISLEM (dry-run)" if self.cfg.dry_run else "GERCEK EMIR"
         net = "TESTNET" if self.cfg.testnet else "GERCEK HESAP (MAINNET)"
-        log.info("Bot basliyor | %s | %s | %s %s", net, mode, self.cfg.symbol, self.cfg.interval)
+        log.info(
+            "Bot basliyor | %s | %s | %s %s",
+            net, mode, ",".join(self.cfg.symbols), self.cfg.interval,
+        )
 
-        self.filters = self.client.get_symbol_filters(self.cfg.symbol)
-        log.info("Sembol filtreleri: %s", self.filters)
+        for symbol in self.cfg.symbols:
+            self.filters[symbol] = self.client.get_symbol_filters(symbol)
+            log.info("%s filtreleri: %s", symbol, self.filters[symbol])
+
+        self.notify(f"🚀 Bot basladi: {', '.join(self.cfg.symbols)} ({net}, {mode})")
 
         while True:
             try:

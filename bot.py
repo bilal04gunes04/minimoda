@@ -50,6 +50,15 @@ def main():
             sys.exit(0)
 
     trader = Trader(cfg)
+
+    if cfg.telegram.enabled:
+        from trading_bot.telegram_bot import TelegramBot
+
+        tg = TelegramBot(cfg.telegram.token, cfg.telegram.chat_id, trader)
+        trader.notify = tg.send
+        tg.start()
+        log.info("Telegram kontrol paneli aktif")
+
     try:
         trader.run_forever()
     except KeyboardInterrupt:
